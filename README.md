@@ -1,14 +1,15 @@
 # Flamingo Exposure Scanner
 
-Flamingo is a Python-based OSINT utility that helps assess publicly visible personal exposure by scanning common data broker sites and checking email breach history.
+Flamingo is a Python OSINT utility that helps assess publicly visible personal exposure across data brokers, Gravatar, and email breach sources.
 
 ## Features
 
-- Scans **30 major people-search and broker domains** in managed batches.
-- Uses retry logic and pacing delays to reduce search-rate issues.
-- Checks email breach exposure via the **XposedOrNot** public API.
-- Calculates a combined exposure score (`0-100`) with a human-readable risk label.
-- Exports full scan results to `exposure_report.json`.
+- Scans **30 people-search and broker domains** in rate-limited batches.
+- Retries data broker lookups when search requests are limited.
+- Checks for public **Gravatar** profile/avatar exposure from an email hash.
+- Checks known email breach exposure through the **XposedOrNot** API.
+- Calculates an exposure score (`0-100`) and risk status.
+- Exports full structured results to `exposure_report.json`.
 
 ## Requirements
 
@@ -28,24 +29,30 @@ pip install requests ddgs
 
 ## Usage
 
-Run the scanner:
-
 ```bash
 python exposure_scanner.py
 ```
 
-You will be prompted for:
+Prompts:
 
 1. Full name
 2. Location (optional)
 3. Primary email
 
+At least one of **full name** or **email** is required.
+
+## What the scan checks
+
+- **Data broker exposure:** Finds public listing matches and includes opt-out links.
+- **Gravatar footprint:** Detects public profile/avatar presence tied to the email hash.
+- **Email breach exposure:** Reports known breach source names from XposedOrNot.
+
 ## Output
 
-After execution, the script:
+After execution, Flamingo:
 
-- Prints a summary report to the terminal
-- Saves detailed structured output to:
+- Prints a terminal summary (score, threat level, findings count)
+- Saves detailed results to:
 
 ```text
 exposure_report.json
@@ -53,13 +60,14 @@ exposure_report.json
 
 The JSON report includes:
 
-- Target inputs
-- Exposure score and status
-- Matching broker listings
-- Breach count and breach source details
+- Target inputs (`name`, `location`, `email`)
+- `exposure_score` and status
+- Data broker findings and per-result opt-out URLs
+- Gravatar footprint details
+- Breach count and breach identifiers
 
-## Notes & Disclaimer
+## Notes & disclaimer
 
-- This tool depends on third-party search and breach APIs, which may change behavior or limit requests.
-- Results are best-effort and not guaranteed to be complete.
-- Use responsibly and only for lawful, authorized personal security assessment.
+- Results are best-effort and rely on third-party services that may throttle, fail, or change behavior.
+- No API keys are required for current integrations, but remote service policies can change.
+- Use only for lawful and authorized personal security assessment.
