@@ -4,7 +4,7 @@ import time
 import requests
 from ddgs import DDGS
 
-# Expanded list of 30 top data brokers, voter registries, and public directories
+# 30 Top Data Brokers, Public Record Aggregators, and Voter Registries
 DATA_BROKERS = [
     # Group 1: Major People Search
     "spokeo.com", "whitepages.com", "radaris.com", "fastpeoplesearch.com", "truepeoplesearch.com",
@@ -21,43 +21,57 @@ DATA_BROKERS = [
 ]
 
 def scan_data_brokers(full_name: str, location: str = "") -> list:
-    """Scans 30 data brokers in batches of 5 with a 60-second delay between batches."""
+    """
+    Scans 30 data brokers in batches of 5.
+    Includes robust key parsing, rate-limit retry logic, and inter-batch delays.
+    """
     print(f"\n[+] Scanning {len(DATA_BROKERS)} broker databases for '{full_name}'...")
     found_profiles = []
     
-    # Split 30 domains into 6 batches of 5 domains each
     batch_size = 5
     broker_batches = [DATA_BROKERS[i:i + batch_size] for i in range(0, len(DATA_BROKERS), batch_size)]
     
     with DDGS() as ddgs:
         for idx, batch in enumerate(broker_batches, start=1):
-            # Construct batch query: (site:site1.com OR site:site2.com ...) "Name" "Location"
+            # Simplified query format without strict parentheses syntax
             sites_or = " OR ".join([f"site:{site}" for site in batch])
-            query = f'({sites_or}) "{full_name}"'
+            query = f'{sites_or} "{full_name}"'
             if location:
                 query += f' "{location}"'
             
             print(f"\n  [Batch {idx}/{len(broker_batches)}] Checking: {', '.join(batch[:3])}...")
             
-            # Retry mechanism for temporary rate limits
             retries = 3
             for attempt in range(retries):
                 try:
                     results = list(ddgs.text(query, max_results=10))
                     if results:
+                        valid_hits = 0
                         for r in results:
-                            href = r.get("href", "")
-                            # Map result back to the specific broker domain
-                            matched_site = next((site for site in batch if site in href), "unknown broker")
+                            # Key fallbacks in case ddgs uses alternate result field names
+                            title = r.get("title") or r.get("heading") or ""
+                            href = r.get("href") or r.get("url") or r.get("link") or ""
+                            snippet = r.get("body") or r.get("snippet") or ""
+                            
+                            # Skip phantom/blank results
+                            if not title and not href:
+                                continue
+                            
+                            matched_site = next((site for site in batch if site in href), "data broker")
                             found_profiles.append({
                                 "broker": matched_site,
-                                "title": r.get("title"),
+                                "title": title if title else f"Listing on {matched_site}",
                                 "url": href,
-                                "snippet": r.get("body")
+                                "snippet": snippet
                             })
-                            print(f"    🔴 FOUND: {r.get('title')} ({href})")
+                            valid_hits += 1
+                            display_title = title if title else f"Listing on {matched_site}"
+                            print(f"    🔴 FOUND: {display_title} -> {href}")
+                            
+                        if valid_hits == 0:
+                            print("    🟢 Clear (No matches in this batch)")
                     else:
-                        print(f"    🟢 Clear (No matches in this batch)")
+                        print("    🟢 Clear (No matches in this batch)")
                     break  # Success, exit retry loop
                     
                 except Exception as e:
@@ -66,40 +80,55 @@ def scan_data_brokers(full_name: str, location: str = "") -> list:
                         print(f"    ⚠️ Search rate-limited. Retrying in {wait_seconds}s...")
                         time.sleep(wait_seconds)
                     else:
-                        print(f"    ❌ Skipped batch due to persistent rate limit")
+                        print("    ❌ Skipped batch due to persistent rate limit")
             
-            # 60-second pause between batches (skip countdown after final batch)
+            # 60-second pause between batches
             if idx < len(broker_batches):
                 delay_seconds = 60
-                print(f"  [⏳] Pausing for {delay_seconds} seconds before next batch...")
+                print(f"  [⏳] Pausing for {delay_seconds}s to respect search rate limits...")
                 for remaining in range(delay_seconds, 0, -5):
-                    print(f"      Waiting... {remaining}s remaining", end="\r")
+                    print(f"      Next batch in {remaining}s...", end="\r")
                     time.sleep(5)
-                print(" " * 40, end="\r")  # Clear timer line
+                print(" " * 40, end="\r")  # Clear countdown line
             
     return found_profiles
 
 
 def check_email_breaches(email: str) -> dict:
-    """Queries public breach records."""
-    print(f"\n[+] Checking breach status for '{email}'...")
+    """Queries XposedOrNot free API to check email breach exposure without an API key."""
+    print(f"\n[+] Checking breach status for '{email}' via XposedOrNot...")
     headers = {'User-Agent': 'ExposureScanner-Script/1.0'}
-    url = f"https://haveibeenpwned.com/api/v3/breachedaccount/{email}?truncateResponse=false"
+    url = f"https://api.xposedornot.com/v1/check-email/{email}"
     
     try:
         response = requests.get(url, headers=headers, timeout=10)
+        
         if response.status_code == 200:
-            breaches = response.json()
-            return {"count": len(breaches), "details": [b.get("Name") for b in breaches]}
-        elif response.status_code == 404:
+            data = response.json()
+            if "breaches" in data and data["breaches"]:
+                # Handle nested array responses from API
+                raw_breaches = data["breaches"]
+                breach_list = raw_breaches[0] if isinstance(raw_breaches[0], list) else raw_breaches
+                
+                print(f"  🔴 FOUND: {len(breach_list)} breach leak(s) linked to this email!")
+                for b in breach_list:
+                    print(f"      - {b}")
+                return {"count": len(breach_list), "details": breach_list}
+            else:
+                print("  🟢 Clear (No known breaches found for this email)")
+                return {"count": 0, "details": []}
+                
+        elif response.status_code == 404 or "Not found" in response.text:
+            print("  🟢 Clear (No known breaches found for this email)")
             return {"count": 0, "details": []}
-        elif response.status_code == 401:
-            print("  [!] HIBP API requires an API key for full breach list details.")
-            return {"count": -1, "details": ["API Key required for detailed list"]}
+            
+        else:
+            print(f"  ⚠️ Breach service returned status code {response.status_code}")
+            return {"count": 0, "details": []}
+            
     except Exception as e:
         print(f"  [!] Breach search error: {e}")
-        
-    return {"count": 0, "details": []}
+        return {"count": 0, "details": []}
 
 
 def calculate_cooked_score(broker_count: int, breach_count: int, has_location: bool) -> tuple:
@@ -164,7 +193,7 @@ def run_exposure_scan():
     }
     
     print("\n==========================================")
-    print(f"         EXPOSURE REPORT RESULTS          ")
+    print("         EXPOSURE REPORT RESULTS          ")
     print("==========================================")
     print(f" Exposure Score : {score} / 100")
     print(f" Threat Level   : {status}")
