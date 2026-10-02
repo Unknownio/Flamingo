@@ -1,3 +1,4 @@
+import hashlib
 import json
 import random
 import time
@@ -20,10 +21,45 @@ DATA_BROKERS = [
     "cubib.com", "voterrecords.com", "publicrecords360.com", "yellowpages.com", "smartfastfinder.com"
 ]
 
+# Direct Opt-Out / Data Removal Request Forms
+OPT_OUT_LINKS = {
+    "spokeo.com": "https://www.spokeo.com/optout",
+    "whitepages.com": "https://www.whitepages.com/suppression-requests",
+    "radaris.com": "https://radaris.com/page/opt-out",
+    "fastpeoplesearch.com": "https://www.fastpeoplesearch.com/removal",
+    "truepeoplesearch.com": "https://www.truepeoplesearch.com/removal",
+    "beenverified.com": "https://www.beenverified.com/app/optout/search",
+    "peoplelooker.com": "https://www.peoplelooker.com/f/optout/search",
+    "thatsthem.com": "https://thatsthem.com/optout",
+    "nuwber.com": "https://nuwber.com/removal/link",
+    "searchpeoplefree.com": "https://www.searchpeoplefree.com/opt-out",
+    "cyberbackgroundchecks.com": "https://www.cyberbackgroundchecks.com/removal",
+    "instantcheckmate.com": "https://www.instantcheckmate.com/opt-out/",
+    "truthfinder.com": "https://www.truthfinder.com/opt-out/",
+    "intelius.com": "https://www.intelius.com/opt-out/",
+    "checkpeople.com": "https://checkpeople.com/opt-out",
+    "peekyou.com": "https://www.peekyou.com/about/contact/optout/",
+    "zabasearch.com": "https://www.zabasearch.com/block_records/",
+    "ussearch.com": "https://www.ussearch.com/opt-out/",
+    "familytreenow.com": "https://www.familytreenow.com/optout",
+    "usphonebook.com": "https://www.usphonebook.com/opt-out",
+    "clustrmaps.com": "https://clustrmaps.com/bl/opt-out",
+    "addresssearch.com": "https://www.addresssearch.com/remove-name.php",
+    "anywho.com": "https://www.anywho.com/optout",
+    "411.com": "https://www.411.com/opt-out",
+    "spytox.com": "https://www.spytox.com/optout",
+    "cubib.com": "https://cubib.com/optout.php",
+    "voterrecords.com": "https://voterrecords.com/optout",
+    "publicrecords360.com": "https://www.publicrecords360.com/optout",
+    "yellowpages.com": "https://www.yellowpages.com/about/opt-out",
+    "smartfastfinder.com": "https://smartfastfinder.com/optout"
+}
+
+
 def scan_data_brokers(full_name: str, location: str = "") -> list:
     """
     Scans 30 data brokers in batches of 5.
-    Includes robust key parsing, rate-limit retry logic, and inter-batch delays.
+    Attaches direct opt-out removal links for every discovered listing.
     """
     print(f"\n[+] Scanning {len(DATA_BROKERS)} broker databases for '{full_name}'...")
     found_profiles = []
@@ -33,7 +69,6 @@ def scan_data_brokers(full_name: str, location: str = "") -> list:
     
     with DDGS() as ddgs:
         for idx, batch in enumerate(broker_batches, start=1):
-            # Simplified query format without strict parentheses syntax
             sites_or = " OR ".join([f"site:{site}" for site in batch])
             query = f'{sites_or} "{full_name}"'
             if location:
@@ -48,20 +83,21 @@ def scan_data_brokers(full_name: str, location: str = "") -> list:
                     if results:
                         valid_hits = 0
                         for r in results:
-                            # Key fallbacks in case ddgs uses alternate result field names
                             title = r.get("title") or r.get("heading") or ""
                             href = r.get("href") or r.get("url") or r.get("link") or ""
                             snippet = r.get("body") or r.get("snippet") or ""
                             
-                            # Skip phantom/blank results
                             if not title and not href:
                                 continue
                             
                             matched_site = next((site for site in batch if site in href), "data broker")
+                            opt_out_link = OPT_OUT_LINKS.get(matched_site, "N/A")
+                            
                             found_profiles.append({
                                 "broker": matched_site,
                                 "title": title if title else f"Listing on {matched_site}",
                                 "url": href,
+                                "opt_out_url": opt_out_link,
                                 "snippet": snippet
                             })
                             valid_hits += 1
@@ -72,7 +108,7 @@ def scan_data_brokers(full_name: str, location: str = "") -> list:
                             print("    🟢 Clear (No matches in this batch)")
                     else:
                         print("    🟢 Clear (No matches in this batch)")
-                    break  # Success, exit retry loop
+                    break
                     
                 except Exception as e:
                     if attempt < retries - 1:
@@ -82,20 +118,85 @@ def scan_data_brokers(full_name: str, location: str = "") -> list:
                     else:
                         print("    ❌ Skipped batch due to persistent rate limit")
             
-            # 60-second pause between batches
             if idx < len(broker_batches):
                 delay_seconds = 60
                 print(f"  [⏳] Pausing for {delay_seconds}s to respect search rate limits...")
                 for remaining in range(delay_seconds, 0, -5):
                     print(f"      Next batch in {remaining}s...", end="\r")
                     time.sleep(5)
-                print(" " * 40, end="\r")  # Clear countdown line
+                print(" " * 40, end="\r")
             
     return found_profiles
 
 
+def check_gravatar_profile(email: str) -> dict:
+    """Queries Gravatar API for public profile and avatar existence for the given email."""
+    if not email:
+        return {"exists": False}
+        
+    print(f"\n[+] Checking Gravatar public footprint for '{email}'...")
+    email_clean = email.strip().lower().encode('utf-8')
+    sha256_hash = hashlib.sha256(email_clean).hexdigest()
+    
+    headers = {'User-Agent': 'ExposureScanner-Script/1.0'}
+    json_url = f"https://gravatar.com/{sha256_hash}.json"
+    avatar_url = f"https://www.gravatar.com/avatar/{sha256_hash}?d=404"
+    
+    profile_data = {
+        "exists": False,
+        "avatar_url": f"https://www.gravatar.com/avatar/{sha256_hash}",
+        "profile_url": f"https://gravatar.com/{sha256_hash}",
+        "display_name": None,
+        "about": None,
+        "location": None,
+        "social_accounts": []
+    }
+    
+    try:
+        # Check Gravatar public profile JSON
+        res = requests.get(json_url, headers=headers, timeout=8)
+        if res.status_code == 200:
+            data = res.json()
+            if "entry" in data and len(data["entry"]) > 0:
+                entry = data["entry"][0]
+                profile_data["exists"] = True
+                profile_data["display_name"] = entry.get("displayName")
+                profile_data["about"] = entry.get("aboutMe")
+                profile_data["location"] = entry.get("currentLocation")
+                profile_data["profile_url"] = entry.get("profileUrl", profile_data["profile_url"])
+                
+                accounts = entry.get("accounts", [])
+                profile_data["social_accounts"] = [acc.get("url") for acc in accounts if acc.get("url")]
+                
+                print(f"  🔴 FOUND: Active Gravatar Profile ({profile_data['profile_url']})")
+                if profile_data["display_name"]:
+                    print(f"      - Display Name : {profile_data['display_name']}")
+                if profile_data["location"]:
+                    print(f"      - Location     : {profile_data['location']}")
+                if profile_data["social_accounts"]:
+                    print(f"      - Linked Socials: {', '.join(profile_data['social_accounts'])}")
+                return profile_data
+        
+        # Fallback check for uploaded custom avatar image
+        img_res = requests.head(avatar_url, headers=headers, timeout=8)
+        if img_res.status_code == 200:
+            profile_data["exists"] = True
+            print("  🔴 FOUND: Active Gravatar Avatar detected (Profile details hidden)")
+            return profile_data
+            
+        print("  🟢 Clear (No public Gravatar account or custom avatar linked)")
+        return profile_data
+
+    except Exception as e:
+        print(f"  [!] Gravatar lookup error: {e}")
+        return profile_data
+
+
 def check_email_breaches(email: str) -> dict:
     """Queries XposedOrNot free API to check email breach exposure without an API key."""
+    if not email:
+        return {"count": 0, "details": []}
+
     print(f"\n[+] Checking breach status for '{email}' via XposedOrNot...")
     headers = {'User-Agent': 'ExposureScanner-Script/1.0'}
     url = f"https://api.xposedornot.com/v1/check-email/{email}"
@@ -106,7 +207,6 @@ def check_email_breaches(email: str) -> dict:
         if response.status_code == 200:
             data = response.json()
             if "breaches" in data and data["breaches"]:
-                # Handle nested array responses from API
                 raw_breaches = data["breaches"]
                 breach_list = raw_breaches[0] if isinstance(raw_breaches[0], list) else raw_breaches
                 
@@ -131,16 +231,20 @@ def check_email_breaches(email: str) -> dict:
         return {"count": 0, "details": []}
 
 
-def calculate_cooked_score(broker_count: int, breach_count: int, has_location: bool) -> tuple:
-    """Calculates exposure score based on total hits found."""
+def calculate_cooked_score(broker_count: int, breach_count: int, gravatar_found: bool, has_location: bool) -> tuple:
+    """Calculates exposure score based on broker hits, data breaches, and Gravatar footprints."""
     score = 0
     
-    # Broker visibility score (up to 70 points max)
-    score += min(broker_count * 5, 70)
+    # Broker visibility score (up to 60 points max)
+    score += min(broker_count * 5, 60)
     
     # Breach score (up to 30 points max)
     if breach_count > 0:
         score += min(breach_count * 8, 30)
+        
+    # Gravatar exposure score (10 points max)
+    if gravatar_found:
+        score += 10
         
     if has_location and broker_count > 0:
         score = min(int(score * 1.1), 100)
@@ -171,10 +275,16 @@ def run_exposure_scan():
         return
 
     broker_hits = scan_data_brokers(full_name, location) if full_name else []
+    gravatar_info = check_gravatar_profile(email) if email else {"exists": False}
     breach_info = check_email_breaches(email) if email else {"count": 0, "details": []}
     
     breach_count = max(breach_info["count"], 0)
-    score, status = calculate_cooked_score(len(broker_hits), breach_count, bool(location))
+    score, status = calculate_cooked_score(
+        len(broker_hits), 
+        breach_count, 
+        gravatar_info.get("exists", False), 
+        bool(location)
+    )
     
     report = {
         "target": {
@@ -189,6 +299,7 @@ def run_exposure_scan():
             "total_found": len(broker_hits),
             "listings": broker_hits
         },
+        "gravatar_footprint": gravatar_info,
         "breach_exposure": breach_info
     }
     
@@ -198,19 +309,21 @@ def run_exposure_scan():
     print(f" Exposure Score : {score} / 100")
     print(f" Threat Level   : {status}")
     print(f" Brokers Found  : {len(broker_hits)} / {len(DATA_BROKERS)} scanned sites")
+    print(f" Gravatar Found : {'YES' if gravatar_info.get('exists') else 'NO'}")
     print(f" Email Breaches : {breach_count} known leaks")
     print("==========================================\n")
     
     if broker_hits:
-        print("--- DISCOVERED EXPOSURE URLS ---")
+        print("--- DISCOVERED EXPOSURE & OPT-OUT LINKS ---")
         for hit in broker_hits:
             print(f"• [{hit['broker']}] {hit['title']}")
-            print(f"  URL: {hit['url']}\n")
+            print(f"  Exposure URL : {hit['url']}")
+            print(f"  Opt-Out Form : {hit['opt_out_url']}\n")
             
     filename = "exposure_report.json"
     with open(filename, "w") as f:
         json.dump(report, f, indent=4)
-    print(f"[+] Scan completed! Full results saved to '{filename}'.")
+    print(f"[+] Scan completed! Full enriched results saved to '{filename}'.")
 
 if __name__ == "__main__":
     run_exposure_scan()
