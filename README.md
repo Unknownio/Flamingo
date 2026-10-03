@@ -33,8 +33,16 @@ pip install requests ddgs
 
 ## Usage
 
+### CLI scanner
+
 ```bash
 python exposure_scanner.py
+```
+
+### GUI app
+
+```bash
+python app.py
 ```
 
 Prompts:
