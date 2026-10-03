@@ -2,6 +2,10 @@
 
 Flamingo is a Python OSINT utility that helps assess publicly visible personal exposure across data brokers, Gravatar, and email breach sources.
 
+## Project status
+
+This project is currently closed due to limited support for cities outside the USA. It is best suited for people in the USA, and development will continue when I have more time to find a workaround.
+
 ## Features
 
 - Scans **30 people-search and broker domains** in rate-limited batches.
